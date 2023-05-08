@@ -27,14 +27,14 @@ def test_consecutive_check():
     assert seq3[result4[0].start:result4[0].end] == 'TTTGTTTT'
 
 
-def test_repeat_unit_check_rex():
-    seq1 = 'AGAAGCAGCTTA'
-    seq2 = 'AGAGCAGCAGCAGCTAGCAGCAGCTTTAAA'
-    result1 = repeat_unit_check_rex(seq1, 'AGC', 3)
-    result2 = repeat_unit_check_rex(seq2, 'AGC', 3)
-    assert len(result1) == 0
-    assert len(result2) == 2
-    assert seq2[result2[0].start: result2[0].end] == 'AGC' * 4
+# def test_repeat_unit_check_rex():
+#     seq1 = 'AGAAGCAGCTTA'
+#     seq2 = 'AGAGCAGCAGCAGCTAGCAGCAGCTTTAAA'
+#     result1 = repeat_unit_check_rex(seq1, 'AGC', 3)
+#     result2 = repeat_unit_check_rex(seq2, 'AGC', 3)
+#     assert len(result1) == 0
+#     assert len(result2) == 2
+#     assert seq2[result2[0].start: result2[0].end] == 'AGC' * 4
 
 
 def test_repeat_unit_check():

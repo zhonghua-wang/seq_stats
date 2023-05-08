@@ -21,7 +21,6 @@ class CheckResult(BaseModel):
 
 # calculate the GC content of the specified sequence
 def gc_content(seq: str) -> float:
-    seq = seq.upper()
     return (seq.count('G') + seq.count('C')) / len(seq)
 
 
@@ -32,7 +31,6 @@ def is_valid(seq: str) -> bool:
 
 # find the regions that GC contents < 40% or > 60% in the specified sequence
 def gc_check(seq: str, window_size: int = 15, gc_threshold=(0.4, 0.6)) -> List[CheckResult]:
-    seq = seq.upper()
     lower, upper = gc_threshold
     gc_regions = []
     if len(seq) < window_size:
@@ -57,7 +55,6 @@ def gc_check(seq: str, window_size: int = 15, gc_threshold=(0.4, 0.6)) -> List[C
 
 # find the regions that contain consecutive nucleotides in the specified sequence
 def consecutive_check(seq: str, window_size: int = 4, noise: float = 0.0) -> List[CheckResult]:
-    seq = seq.upper()
     if len(seq) < window_size:
         # print('Invalid sequence')
         return []
@@ -80,15 +77,15 @@ def consecutive_check(seq: str, window_size: int = 4, noise: float = 0.0) -> Lis
 
 
 # consecutive repeat unit check
-def repeat_unit_check_rex(seq: str, repeat_unit: str, repeat_count: int) -> List[CheckResult]:
-    # use regex to find the repeat unit
-    pattern = f"(AGC){{{repeat_count},}}"  # 匹配 AGC 重复 3 次以上的模式
-    match_list = []
-    for match in re.finditer(pattern, seq):
-        match_list.append(
-            CheckResult(start=match.start(), end=match.end(), type='unit_repeat', problem=f'repeat unit: {repeat_unit}')
-        )
-    return match_list
+# def repeat_unit_check_rex(seq: str, repeat_unit: str, repeat_count: int) -> List[CheckResult]:
+#     # use regex to find the repeat unit
+#     pattern = f"(AGC){{{repeat_count},}}"  # 匹配 AGC 重复 3 次以上的模式
+#     match_list = []
+#     for match in re.finditer(pattern, seq):
+#         match_list.append(
+#             CheckResult(start=match.start(), end=match.end(), type='unit_repeat', problem=f'repeat unit: {repeat_unit}')
+#         )
+#     return match_list
 
 
 # consecutive repeat unit check with noise tolerance
@@ -134,7 +131,14 @@ def _repeat_unit_check(
     return repeat_regions
 
 
-def long_distance_fixed_segment_repeats_check(dna_sequence, repeat_length):
+def _seq_cmp(seq1: str, seq2: str, noise: float):
+    if noise == 0:
+        return seq1 == seq2
+    eq_pos = sum(map(lambda x: x[0] == x[1], (zip(seq1, seq2))))
+    return eq_pos / len(seq1) >= 1 - noise
+
+
+def long_distance_fixed_segment_repeats_check(dna_sequence: str, repeat_length: int, noise: float = 0)-> List[CheckResult]:
     """
     在DNA序列中查找多次出现的相同片段序列组以及它们的索引位置。
 
@@ -143,17 +147,22 @@ def long_distance_fixed_segment_repeats_check(dna_sequence, repeat_length):
     repeat_length (int): 相同片段序列的长度。
 
     返回：
-    repeats (dict): 包含相同片段序列组和索引位置的字典，键为相同片段序列，值为索引位置的列表。
+    CheckResult列表，每个CheckResult对象包含一个相同片段序列组的信息。
     """
     repeats = {}
     for i in range(len(dna_sequence) - repeat_length + 1):
         repeat = dna_sequence[i:i + repeat_length]
-        if repeat in repeats:
-            pos_list = repeats[repeat]
-            # append to repeats if the repeat is not adjacent to the previous one
-            if i - pos_list[-1] - repeat_length > 1:
-                repeats[repeat].append(i)
-        else:
+        flag = False
+        for k, v in repeats.items():
+            # 如果重复片段与已有的重复片段相似，则将其添加到已有的重复片段组中
+            if _seq_cmp(repeat, k, noise):
+                flag = True
+                pos_list = repeats[repeat]
+                # append to repeats if the repeat is not adjacent to the previous one
+                if i - pos_list[-1] - repeat_length > 1:
+                    repeats[k].append(i)
+                break
+        if not flag:
             repeats[repeat] = [i]
 
     # 只保留重复出现的片段序列
@@ -170,17 +179,39 @@ def long_distance_fixed_segment_repeats_check(dna_sequence, repeat_length):
     return result_list
 
 
-def long_distance_segment_repeats_check(seq: str, min_length: int = 5):
+def long_distance_segment_repeats_check(seq: str, min_length: int = 5, noise: float = 0) -> List[CheckResult]:
     result_list = []
     if len(seq) < min_length * 2:
         return result_list
     for length in range(int(len(seq) / 2), min_length - 1, -1):
-        for result in long_distance_fixed_segment_repeats_check(seq, length):
+        for result in long_distance_fixed_segment_repeats_check(seq, length, noise):
             if any(
                     [result.start <= x.start <= result.end or result.start <= x.end <= result.end for x in result_list]
             ):
                 continue
             result_list.append(result)
+    return result_list
+
+
+def check_all_problems(
+        seq: str,
+        gc_min: float = 0.4, gc_max: float = 0.6, gc_window_size: int = 15,
+        consecutive_window_size: int = 3, consecutive_noise: float = 0.2,
+        repeat_unit: str = 'AGC', repeat_count: int = 3, repeat_noise: float = 0.2,
+        long_distance_repeats_min_length: int = 5, long_distance_repeats_noise: float = 0
+) -> List[CheckResult]:
+    # uppercase the sequence
+    seq = seq.upper()
+    # check if the sequence is valid
+    if not is_valid(seq):
+        raise ValueError('Invalid sequence.')
+    result_list = []
+    result_list.extend(gc_check(seq, gc_window_size, (gc_min, gc_max)))
+    result_list.extend(consecutive_check(seq, consecutive_window_size, consecutive_noise))
+    result_list.extend(repeat_unit_check(seq, repeat_unit, repeat_count, repeat_noise))
+    result_list.extend(
+        long_distance_segment_repeats_check(seq, long_distance_repeats_min_length, long_distance_repeats_noise)
+    )
     return result_list
 
 
