@@ -45,10 +45,10 @@ def gc_check(seq: str, window_size: int = 15, gc_threshold=(0.4, 0.6)) -> List[C
             end = j
     gc_content_ = gc_content(seq[0:end])
     if gc_content_ < lower:
-        gc_regions.append(CheckResult(start=0, end=end, type='low', problem=f'GC content < {lower}'))
+        gc_regions.append(CheckResult(start=0, end=end, type='gc', problem=f'GC content < {lower}'))
         gc_regions.extend([x.add_base(end) for x in gc_check(seq[end:], window_size, gc_threshold)])
     elif gc_content_ > upper:
-        gc_regions.append(CheckResult(start=0, end=end, type='high', problem=f'GC content > {upper}'))
+        gc_regions.append(CheckResult(start=0, end=end, type='gc', problem=f'GC content > {upper}'))
         gc_regions.extend([x.add_base(end) for x in gc_check(seq[end:], window_size, gc_threshold)])
     else:
         gc_regions.extend([x.add_base(1) for x in gc_check(seq[1:], window_size, gc_threshold)])
@@ -134,9 +134,58 @@ def _repeat_unit_check(
     return repeat_regions
 
 
-if __name__ == '__main__':
-    test_seq = 'AGAGCAGCAGCAGCTAGCAGCAGCTTTAAA'
-    for el in repeat_unit_check(test_seq, 'AGC', 3, 1/8):
-        print(el)
-        print(test_seq[el.start:el.end])
+def long_distance_fixed_segment_repeats_check(dna_sequence, repeat_length):
+    """
+    在DNA序列中查找多次出现的相同片段序列组以及它们的索引位置。
 
+    参数：
+    dna_sequence (str): DNA序列字符串。
+    repeat_length (int): 相同片段序列的长度。
+
+    返回：
+    repeats (dict): 包含相同片段序列组和索引位置的字典，键为相同片段序列，值为索引位置的列表。
+    """
+    repeats = {}
+    for i in range(len(dna_sequence) - repeat_length + 1):
+        repeat = dna_sequence[i:i + repeat_length]
+        if repeat in repeats:
+            pos_list = repeats[repeat]
+            # append to repeats if the repeat is not adjacent to the previous one
+            if i - pos_list[-1] - repeat_length > 1:
+                repeats[repeat].append(i)
+        else:
+            repeats[repeat] = [i]
+
+    # 只保留重复出现的片段序列
+    result_list = []
+    for repeat, indexes in repeats.items():
+        if len(indexes) > 1:
+            for index in indexes:
+                result_list.append(
+                    CheckResult(
+                        start=index, end=index + repeat_length,
+                        type='segment_repeat', problem=f'repeat unit: {repeat}'
+                    )
+                )
+    return result_list
+
+
+def long_distance_segment_repeats_check(seq: str, min_length: int = 5):
+    result_list = []
+    if len(seq) < min_length * 2:
+        return result_list
+    for length in range(int(len(seq) / 2), min_length - 1, -1):
+        for result in long_distance_fixed_segment_repeats_check(seq, length):
+            if any(
+                    [result.start <= x.start <= result.end or result.start <= x.end <= result.end for x in result_list]
+            ):
+                continue
+            result_list.append(result)
+    return result_list
+
+
+if __name__ == '__main__':
+    test_seq = 'GTATATGCATGTGATATATATGG'
+    for el in long_distance_segment_repeats_check(test_seq, 5):
+        print(el)
+        # print(test_seq[el.start:el.end])
