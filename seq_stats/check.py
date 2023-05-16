@@ -1,8 +1,10 @@
 from collections import Counter
-from typing import List, Tuple
+from typing import List, Tuple, Dict
 import re
 
+import pandas as pd
 from pydantic import BaseModel
+from tqdm import tqdm
 
 
 # check result model
@@ -43,10 +45,10 @@ def gc_check(seq: str, window_size: int = 15, gc_threshold=(0.4, 0.6)) -> List[C
             end = j
     gc_content_ = gc_content(seq[0:end])
     if gc_content_ < lower:
-        gc_regions.append(CheckResult(start=0, end=end, type='gc', problem=f'GC content < {lower}'))
+        gc_regions.append(CheckResult(start=0, end=end, type='GC含量', problem=f'GC含量 < {lower}'))
         gc_regions.extend([x.add_base(end) for x in gc_check(seq[end:], window_size, gc_threshold)])
     elif gc_content_ > upper:
-        gc_regions.append(CheckResult(start=0, end=end, type='gc', problem=f'GC content > {upper}'))
+        gc_regions.append(CheckResult(start=0, end=end, type='GC含量', problem=f'GC含量 > {upper}'))
         gc_regions.extend([x.add_base(end) for x in gc_check(seq[end:], window_size, gc_threshold)])
     else:
         gc_regions.extend([x.add_base(1) for x in gc_check(seq[1:], window_size, gc_threshold)])
@@ -68,7 +70,7 @@ def consecutive_check(seq: str, window_size: int = 4, noise: float = 0.0) -> Lis
     mc = Counter(seq[0:end]).most_common()[0]
     if mc[1] / end >= 1 - noise:
         consecutive_regions.append(
-            CheckResult(start=0, end=end, type='consecutive', problem=f'consecutive nucleotides: {mc[0]}')
+            CheckResult(start=0, end=end, type='连续重复碱基', problem=f'连续碱基: {mc[0]}')
         )
         consecutive_regions.extend([x.add_base(end) for x in consecutive_check(seq[end:], window_size, noise)])
     else:
@@ -112,7 +114,7 @@ def _repeat_unit_check(
         repeat_regions.append(
             CheckResult(
                 start=repeat_unit_list[0], end=repeat_unit_list[end] + len(repeat_unit),
-                type='unit_repeat', problem=f'repeat unit: {repeat_unit}'
+                type='连续重复序列', problem=f'重复单元: {repeat_unit}'
             )
         )
         repeat_regions.extend(
@@ -138,7 +140,8 @@ def _seq_cmp(seq1: str, seq2: str, noise: float):
     return eq_pos / len(seq1) >= 1 - noise
 
 
-def long_distance_fixed_segment_repeats_check(dna_sequence: str, repeat_length: int, noise: float = 0)-> List[CheckResult]:
+def long_distance_fixed_segment_repeats_check(dna_sequence: str, repeat_length: int, noise: float = 0) -> List[
+    CheckResult]:
     """
     在DNA序列中查找多次出现的相同片段序列组以及它们的索引位置。
 
@@ -157,7 +160,7 @@ def long_distance_fixed_segment_repeats_check(dna_sequence: str, repeat_length: 
             # 如果重复片段与已有的重复片段相似，则将其添加到已有的重复片段组中
             if _seq_cmp(repeat, k, noise):
                 flag = True
-                pos_list = repeats[repeat]
+                pos_list = repeats[k]
                 # append to repeats if the repeat is not adjacent to the previous one
                 if i - pos_list[-1] - repeat_length > 1:
                     repeats[k].append(i)
@@ -173,7 +176,7 @@ def long_distance_fixed_segment_repeats_check(dna_sequence: str, repeat_length: 
                 result_list.append(
                     CheckResult(
                         start=index, end=index + repeat_length,
-                        type='segment_repeat', problem=f'repeat unit: {repeat}'
+                        type='非连续重复序列', problem=f'重复单元: {repeat}'
                     )
                 )
     return result_list
@@ -193,12 +196,12 @@ def long_distance_segment_repeats_check(seq: str, min_length: int = 5, noise: fl
     return result_list
 
 
-def check_all_problems(
+def check_seq(
         seq: str,
-        gc_min: float = 0.4, gc_max: float = 0.6, gc_window_size: int = 15,
-        consecutive_window_size: int = 3, consecutive_noise: float = 0.2,
-        repeat_unit: str = 'AGC', repeat_count: int = 3, repeat_noise: float = 0.2,
-        long_distance_repeats_min_length: int = 5, long_distance_repeats_noise: float = 0
+        gc_min: float, gc_max: float, gc_window_size: int,
+        consecutive_window_size: int, consecutive_noise: float,
+        repeat_unit: str, repeat_count: int, repeat_noise: float,
+        long_distance_repeats_min_length: int, long_distance_repeats_noise: float
 ) -> List[CheckResult]:
     # uppercase the sequence
     seq = seq.upper()
@@ -215,8 +218,49 @@ def check_all_problems(
     return result_list
 
 
+def check_fasta(
+        fasta_str: str,
+        gc_min: float, gc_max: float, gc_window_size: int,
+        consecutive_window_size: int, consecutive_noise: float,
+        repeat_unit: str, repeat_count: int, repeat_noise: float,
+        long_distance_repeats_min_length: int, long_distance_repeats_noise: float
+) -> Dict[str, List[CheckResult]]:
+    seq_name = ''
+    result_dict = {}
+    for line in fasta_str.split('\n'):
+        if line.startswith('>'):
+            seq_name = line[1:].strip()
+            # print(seq_name)
+            continue
+        else:
+            seq = line.strip()
+            if seq == '':
+                continue
+            if not is_valid(seq):
+                print('Error (Invalid sequence): ', seq_name, seq)
+            result_dict[seq_name] = []
+            print(f'正在分析序列{seq_name} ...')
+            # 把序列分成320bp一段，分别检查
+            for i in range(0, len(seq), 320):
+                # print(i)
+                _results = check_seq(
+                        seq[i:i + 320], gc_min, gc_max, gc_window_size, consecutive_window_size, consecutive_noise,
+                        repeat_unit, repeat_count, repeat_noise, long_distance_repeats_min_length,
+                        long_distance_repeats_noise
+                    )
+                result_dict[seq_name].extend(
+                    [x.add_base(i) for x in _results]
+                )
+    return result_dict
+
+
 if __name__ == '__main__':
-    test_seq = 'GTATATGCATGTGATATATATGG'
-    for el in long_distance_segment_repeats_check(test_seq, 5):
-        print(el)
-        # print(test_seq[el.start:el.end])
+    # test_seq = 'GTATATGCATGTGATATATATGG'
+    # for el in long_distance_segment_repeats_check(test_seq, 5):
+    #     print(el.dict())
+    # print(test_seq[el.start:el.end])
+    test_file = '../tests/data/test1.fasta'
+    with open(test_file, 'r') as f:
+        for seq_name, results in check_fasta(f.read(), 0.4, 0.6, 15, 4, 0.1, 'AGC', 3, 0.1, 5, 0.1).items():
+            df = pd.DataFrame([el.dict() for el in results])
+            df.to_excel(f'../tests/data/{seq_name}.xlsx', index=False)
